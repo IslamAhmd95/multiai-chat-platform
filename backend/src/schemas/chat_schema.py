@@ -33,6 +33,7 @@ class Chat(BaseModel):
 
     prompt: str
     response: str
+    model_name: AIModels
     created_at: datetime 
 
 
