@@ -9,11 +9,13 @@ class UserBaseSchema(BaseModel):
 
 class SignUpSchema(UserBaseSchema):
     password: str
+    recaptcha_token: str  # reCAPTCHA token from frontend
 
 
 class LoginSchema(BaseModel):
     login: str | EmailStr
     password: str
+    recaptcha_token: str  # reCAPTCHA token from frontend
 
 
 class UserReadSchema(UserBaseSchema):

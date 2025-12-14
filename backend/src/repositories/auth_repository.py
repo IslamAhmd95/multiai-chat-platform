@@ -4,13 +4,17 @@ from fastapi import status, HTTPException
 from sqlmodel import select, Session
 
 from src.core.token import create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
+from src.core.recaptcha import verify_recaptcha_token
 from src.models.user import User
 from src.core.hashing import hash_password, verify_password
 from src.schemas.auth_schema import SignUpSchema, LoginSchema
 from src.core.helpers import check_email_exists, check_username_exists
 
 
-def signup(data: SignUpSchema, db: Session):
+async def signup(data: SignUpSchema, db: Session):
+    # Verify reCAPTCHA token BEFORE processing signup
+    await verify_recaptcha_token(data.recaptcha_token)
+
     if check_email_exists(data.email, db):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -23,7 +27,8 @@ def signup(data: SignUpSchema, db: Session):
             detail="Username already registered"
         )
 
-    user_data = data.model_dump()
+    user_data = data.model_dump(
+        exclude={'recaptcha_token'})  # Don't store the token
     user_data['password'] = hash_password(user_data['password'])
 
     user = User(**user_data)
@@ -40,7 +45,10 @@ def signup(data: SignUpSchema, db: Session):
         )
 
 
-def login(data: LoginSchema, db: Session):
+async def login(data: LoginSchema, db: Session):
+    # Verify reCAPTCHA token BEFORE processing login
+    await verify_recaptcha_token(data.recaptcha_token)
+
     user = db.scalar(select(User).where(
         (User.email == data.login) | (User.username == data.login)))
     if not user:
