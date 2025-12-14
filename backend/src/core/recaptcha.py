@@ -7,6 +7,10 @@ RECAPTCHA_VERIFY_URL = "https://www.google.com/recaptcha/api/siteverify"
 
 
 async def verify_recaptcha_token(recaptcha_token: str) -> bool:
+
+    if settings.TESTING:
+        return True
+
     if not recaptcha_token:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

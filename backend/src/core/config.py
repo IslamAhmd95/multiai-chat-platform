@@ -17,6 +17,7 @@ class Settings:
     RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW", 60))  # seconds
     RECAPTCHA_SECRET_KEY = os.getenv("RECAPTCHA_SECRET_KEY")
     RECAPTCHA_SITE_KEY = os.getenv("RECAPTCHA_SITE_KEY")
+    TESTING = os.getenv("TESTING", "False").lower() == "true"
 
 
 settings = Settings()

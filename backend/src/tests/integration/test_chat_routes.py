@@ -21,17 +21,20 @@ def authenticated_user(client, test_db):
 
     response = client.post("/auth/login", json={
         "login": "chatuser@example.com",
-        "password": "password123"
+        "password": "password123",
+        "recaptcha_token": "test-token-no-verification"
     })
+
+    assert response.status_code == 200, response.json()
     token = response.json()["access_token"]
-    
+
     return user, token
 
 
 def test_get_platforms_returns_all_models(client):
-    
+
     response = client.get("/ai/platforms")
-    
+
     assert response.status_code == 200
     data = response.json()
     assert "platforms" in data
@@ -40,25 +43,26 @@ def test_get_platforms_returns_all_models(client):
 
 
 def test_get_platforms_includes_gemini(client):
-    
+
     response = client.get("/ai/platforms")
-    
+
     platforms = response.json()["platforms"]
     assert AIModels.GEMINI.value in platforms
 
 
 def test_get_platforms_includes_groq(client):
-    
+
     response = client.get("/ai/platforms")
-    
+
     platforms = response.json()["platforms"]
     assert AIModels.GROQ.value in platforms
 
 
 def test_get_chat_history_requires_authentication(client):
-    
-    response = client.get(f"/ai/chat-history?model_name={AIModels.GEMINI.value}")
-    
+
+    response = client.get(
+        f"/ai/chat-history?model_name={AIModels.GEMINI.value}")
+
     assert response.status_code == 401
 
 
@@ -82,9 +86,9 @@ def test_get_chat_history_returns_user_chats(client, test_db, authenticated_user
     test_db.commit()
 
     response = client.get(f'/ai/chat-history?model_name={AIModels.GEMINI.value}',
-                           headers={"Authorization": f"Bearer {access_token}"}
-                        )
-    
+                          headers={"Authorization": f"Bearer {access_token}"}
+                          )
+
     assert response.status_code == 200
     data = response.json()
     assert "chat" in data
@@ -92,9 +96,9 @@ def test_get_chat_history_returns_user_chats(client, test_db, authenticated_user
 
 
 def test_get_chat_history_filters_by_model(client, test_db, authenticated_user):
-    
+
     user, token = authenticated_user
-    
+
     gemini_chat = ChatHistory(
         user_id=user.id,
         prompt="Gemini prompt",
@@ -110,12 +114,12 @@ def test_get_chat_history_filters_by_model(client, test_db, authenticated_user):
     test_db.add(gemini_chat)
     test_db.add(groq_chat)
     test_db.commit()
-    
+
     response = client.get(
         f"/ai/chat-history?model_name={AIModels.GEMINI.value}",
         headers={"Authorization": f"Bearer {token}"}
     )
-    
+
     data = response.json()
     print(data['chat'])
     assert len(data["chat"]) == 1
@@ -123,14 +127,14 @@ def test_get_chat_history_filters_by_model(client, test_db, authenticated_user):
 
 
 def test_get_chat_history_returns_empty_when_no_chats(client, authenticated_user):
-    
+
     user, token = authenticated_user
-    
+
     response = client.get(
         f"/ai/chat-history?model_name={AIModels.GEMINI.value}",
         headers={"Authorization": f"Bearer {token}"}
     )
-    
+
     data = response.json()
     assert data["chat"] == []
 
@@ -138,9 +142,9 @@ def test_get_chat_history_returns_empty_when_no_chats(client, authenticated_user
 def test_get_chat_history_only_returns_own_chats(client, test_db, authenticated_user):
     from src.models.user import User
     from src.core.hashing import hash_password
-    
+
     user, token = authenticated_user
-    
+
     other_user = User(
         email="other@example.com",
         username="otheruser",
@@ -150,20 +154,20 @@ def test_get_chat_history_only_returns_own_chats(client, test_db, authenticated_
     test_db.add(other_user)
     test_db.commit()
     test_db.refresh(other_user)
-    
+
     other_chat = ChatHistory(
-        user_id=other_user.id,
+        user_id=other_user.id or 0,
         prompt="Other user's chat",
         response="Response",
         model_name=AIModels.GEMINI
     )
     test_db.add(other_chat)
     test_db.commit()
-    
+
     response = client.get(
         f"/ai/chat-history?model_name={AIModels.GEMINI.value}",
         headers={"Authorization": f"Bearer {token}"}
     )
-    
+
     data = response.json()
     assert len(data["chat"]) == 0
