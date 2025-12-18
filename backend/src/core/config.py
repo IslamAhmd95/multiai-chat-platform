@@ -1,4 +1,5 @@
 import os
+import json
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -9,6 +10,16 @@ class Settings:
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
     GROQ_API_KEY = os.getenv('GROQ_API_KEY')
     DATABASE_URL = os.getenv('DATABASE_URL')
+    REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+
+    _default_cors_origins = '["http://localhost:8080", "http://127.0.0.1:8080"]'
+    try:
+        CORS_ORIGINS = json.loads(
+            os.getenv("CORS_ORIGINS", _default_cors_origins))
+    except json.JSONDecodeError:
+        # Fallback to safe defaults if env var contains invalid JSON
+        CORS_ORIGINS = json.loads(_default_cors_origins)
+
     SECRET_KEY = os.getenv("SECRET_KEY")
     ALGORITHM = os.getenv("ALGORITHM", "HS256")
     ACCESS_TOKEN_EXPIRE_MINUTES = int(
