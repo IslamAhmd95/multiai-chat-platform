@@ -1,6 +1,6 @@
 from fastapi import HTTPException
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, AsyncMock
 
 from src.models.chat_history import ChatHistory
 from src.core.enums import AIModels
@@ -22,7 +22,8 @@ def websocket_message():
     )
 
 
-def test_generate_model_response_saves_to_database(test_db, chat_user, websocket_message):
+@pytest.mark.asyncio
+async def test_generate_model_response_saves_to_database(test_db, chat_user, websocket_message):
     # Initialize user fields
     chat_user.ai_requests_count = 0
     chat_user.is_unlimited = False
@@ -35,10 +36,13 @@ def test_generate_model_response_saves_to_database(test_db, chat_user, websocket
         mock_ai.chat.return_value = "Hello! How can I help you?"
         mock_platform.return_value = mock_ai
 
-        chat_record, remaining = chat_repository.generate_model_response(
+        websocket = AsyncMock()
+
+        chat_record, remaining = await chat_repository.generate_model_response(
             websocket_message, 
             chat_user, 
-            test_db
+            test_db,
+            websocket
         )
         
         assert isinstance(chat_record, ChatHistory)
@@ -50,7 +54,8 @@ def test_generate_model_response_saves_to_database(test_db, chat_user, websocket
         assert remaining >= 0
 
 
-def test_generate_model_response_calls_correct_ai_platform(test_db, chat_user):
+@pytest.mark.asyncio
+async def test_generate_model_response_calls_correct_ai_platform(test_db, chat_user):
     chat_user.ai_requests_count = 0
     chat_user.is_unlimited = False
     test_db.add(chat_user)
@@ -62,41 +67,54 @@ def test_generate_model_response_calls_correct_ai_platform(test_db, chat_user):
         model_name=AIModels.GROQ
     )
 
+
     with patch('src.repositories.chat_repository.get_ai_platform') as mock_platform:
         mock_ai = Mock()
         mock_ai.chat.return_value = "Response"
         mock_platform.return_value = mock_ai
 
-        chat_repository.generate_model_response(
+        websocket = AsyncMock()
+
+        await chat_repository.generate_model_response(
             groq_message, 
             chat_user, 
-            test_db
+            test_db,
+            websocket
         )
 
         mock_platform.assert_called_once_with(AIModels.GROQ)
 
 
-def test_generate_model_response_raises_error_when_ai_fails(test_db, chat_user, websocket_message):
+@pytest.mark.asyncio
+async def test_generate_model_response_raises_error_when_ai_fails(test_db, chat_user, websocket_message):
     chat_user.ai_requests_count = 0
     chat_user.is_unlimited = False
     test_db.add(chat_user)
     test_db.commit()
     test_db.refresh(chat_user)
     
+
     with patch('src.repositories.chat_repository.get_ai_platform') as mock_platform:
         mock_ai = Mock()
         mock_ai.chat.side_effect = Exception("API key invalid")
         mock_platform.return_value = mock_ai
 
-        with pytest.raises(HTTPException) as exc_info:
-            chat_repository.generate_model_response(
-                websocket_message, 
-                chat_user, 
-                test_db
-            )
+        websocket = AsyncMock()
+
+        chat_record, remaining = await chat_repository.generate_model_response(
+            websocket_message, 
+            chat_user, 
+            test_db,
+            websocket
+        )
         
-        assert exc_info.value.status_code == 500
-        assert "AI platform error" in exc_info.value.detail
+        # Assertions
+        assert chat_record is None
+        assert remaining is None
+        mock_platform.assert_called_once_with(AIModels.GROQ)
+        websocket.send_json.assert_called_once_with({
+            "error": "AI platform error: API key invalid"
+        })
 
 
 def test_get_chat_history_returns_user_chats(test_db, chat_user):
@@ -217,7 +235,8 @@ def test_check_usage_limit_allows_unlimited_users(test_db, chat_user):
     assert remaining == -1  # -1 indicates unlimited
 
 
-def test_generate_model_response_increments_counter(test_db, chat_user, websocket_message):
+@pytest.mark.asyncio
+async def test_generate_model_response_increments_counter(test_db, chat_user, websocket_message):
     """Test that ai_requests_count is incremented after successful AI response"""
     chat_user.ai_requests_count = 3
     chat_user.is_unlimited = False
@@ -226,23 +245,28 @@ def test_generate_model_response_increments_counter(test_db, chat_user, websocke
     test_db.refresh(chat_user)
     
     initial_count = chat_user.ai_requests_count
-    
+
+
     with patch('src.repositories.chat_repository.get_ai_platform') as mock_platform:
         mock_ai = Mock()
         mock_ai.chat.return_value = "Response"
         mock_platform.return_value = mock_ai
 
-        chat_repository.generate_model_response(
+        websocket = AsyncMock()
+    
+        await chat_repository.generate_model_response(
             websocket_message, 
             chat_user, 
-            test_db
+            test_db,
+            websocket
         )
         
         test_db.refresh(chat_user)
         assert chat_user.ai_requests_count == initial_count + 1
 
 
-def test_generate_model_response_rejects_when_limit_reached(test_db, chat_user, websocket_message):
+@pytest.mark.asyncio
+async def test_generate_model_response_rejects_when_limit_reached(test_db, chat_user, websocket_message):
     """Test that generate_model_response rejects when usage limit is reached"""
     chat_user.ai_requests_count = 10
     chat_user.is_unlimited = False
@@ -250,18 +274,24 @@ def test_generate_model_response_rejects_when_limit_reached(test_db, chat_user, 
     test_db.commit()
     test_db.refresh(chat_user)
     
-    with pytest.raises(HTTPException) as exc_info:
-        chat_repository.generate_model_response(
-            websocket_message, 
-            chat_user, 
-            test_db
-        )
-    
-    assert exc_info.value.status_code == 403
-    assert "usage limit reached" in exc_info.value.detail.lower()
+    websocket = AsyncMock()
+
+    chat_record, remaining = await chat_repository.generate_model_response(
+        websocket_message, 
+        chat_user, 
+        test_db,
+        websocket
+    )
+
+    assert chat_record is None
+    assert remaining is None
+    websocket.send_json.assert_called_once_with({
+        "error": "AI usage limit reached. You have used all 10 free messages."
+    })
 
 
-def test_generate_model_response_allows_unlimited_users(test_db, chat_user, websocket_message):
+@pytest.mark.asyncio
+async def test_generate_model_response_allows_unlimited_users(test_db, chat_user, websocket_message):
     """Test that unlimited users can exceed the normal limit"""
     chat_user.ai_requests_count = 50  # Way over normal limit
     chat_user.is_unlimited = True
@@ -274,10 +304,13 @@ def test_generate_model_response_allows_unlimited_users(test_db, chat_user, webs
         mock_ai.chat.return_value = "Response"
         mock_platform.return_value = mock_ai
 
-        chat_record, remaining = chat_repository.generate_model_response(
+        websocket = AsyncMock()
+
+        chat_record, remaining = await chat_repository.generate_model_response(
             websocket_message, 
             chat_user, 
-            test_db
+            test_db,
+            websocket
         )
         
         assert chat_record is not None
