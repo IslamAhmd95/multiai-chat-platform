@@ -4,13 +4,13 @@ from enum import Enum
 class AIModels(str, Enum):
     GROQ = "groq"
     GEMINI = "gemini"
-    OPENAI = "openai"
+    # OPENAI = "openai"
 
 
 PROVIDER_AVAILABILITY = {
     AIModels.GROQ: True,
     AIModels.GEMINI: False,
-    AIModels.OPENAI: False,
+    # AIModels.OPENAI: False,
 }
 
 

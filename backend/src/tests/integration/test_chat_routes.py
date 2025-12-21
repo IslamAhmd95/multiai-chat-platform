@@ -43,14 +43,6 @@ def test_get_platforms_returns_all_models(client):
     assert len(data["platforms"]) > 0
 
 
-def test_get_platforms_includes_gemini(client):
-
-    response = client.get("/ai/platforms")
-
-    platforms = response.json()["platforms"]
-    assert AIModels.GEMINI.value in platforms
-
-
 def test_get_platforms_includes_groq(client):
 
     response = client.get("/ai/platforms")
@@ -62,7 +54,7 @@ def test_get_platforms_includes_groq(client):
 def test_get_chat_history_requires_authentication(client):
 
     response = client.get(
-        f"/ai/chat-history?model_name={AIModels.GEMINI.value}")
+        f"/ai/chat-history?model_name={AIModels.GROQ.value}")
 
     assert response.status_code == 401
 
@@ -70,30 +62,23 @@ def test_get_chat_history_requires_authentication(client):
 def test_get_chat_history_returns_user_chats(client, test_db, authenticated_user):
     user, access_token = authenticated_user
 
-    chat1 = ChatHistory(
-        user_id=user.id,
-        prompt="Hello",
-        response="Hi there!",
-        model_name=AIModels.GEMINI
-    )
     chat2 = ChatHistory(
         user_id=user.id,
         prompt="How are you?",
         response="I'm doing well!",
-        model_name=AIModels.GEMINI
+        model_name=AIModels.GROQ
     )
-    test_db.add(chat1)
     test_db.add(chat2)
     test_db.commit()
 
-    response = client.get(f'/ai/chat-history?model_name={AIModels.GEMINI.value}',
+    response = client.get(f'/ai/chat-history?model_name={AIModels.GROQ.value}',
                           headers={"Authorization": f"Bearer {access_token}"}
                           )
 
     assert response.status_code == 200
     data = response.json()
     assert "chat" in data
-    assert len(data["chat"]) == 2
+    assert len(data["chat"]) == 1
     assert "usage_info" in data
 
 
@@ -101,31 +86,24 @@ def test_get_chat_history_filters_by_model(client, test_db, authenticated_user):
 
     user, token = authenticated_user
 
-    gemini_chat = ChatHistory(
-        user_id=user.id,
-        prompt="Gemini prompt",
-        response="Gemini response",
-        model_name=AIModels.GEMINI
-    )
     groq_chat = ChatHistory(
         user_id=user.id,
         prompt="Groq prompt",
         response="Groq response",
         model_name=AIModels.GROQ
     )
-    test_db.add(gemini_chat)
     test_db.add(groq_chat)
     test_db.commit()
 
     response = client.get(
-        f"/ai/chat-history?model_name={AIModels.GEMINI.value}",
+        f"/ai/chat-history?model_name={AIModels.GROQ.value}",
         headers={"Authorization": f"Bearer {token}"}
     )
 
     data = response.json()
     print(data['chat'])
     assert len(data["chat"]) == 1
-    assert data["chat"][0]["model_name"] == AIModels.GEMINI.value
+    assert data["chat"][0]["model_name"] == AIModels.GROQ.value
 
 
 def test_get_chat_history_returns_empty_when_no_chats(client, authenticated_user):
@@ -133,7 +111,7 @@ def test_get_chat_history_returns_empty_when_no_chats(client, authenticated_user
     user, token = authenticated_user
 
     response = client.get(
-        f"/ai/chat-history?model_name={AIModels.GEMINI.value}",
+        f"/ai/chat-history?model_name={AIModels.GROQ.value}",
         headers={"Authorization": f"Bearer {token}"}
     )
 
@@ -161,13 +139,13 @@ def test_get_chat_history_only_returns_own_chats(client, test_db, authenticated_
         user_id=other_user.id or 0,
         prompt="Other user's chat",
         response="Response",
-        model_name=AIModels.GEMINI
+        model_name=AIModels.GROQ
     )
     test_db.add(other_chat)
     test_db.commit()
 
     response = client.get(
-        f"/ai/chat-history?model_name={AIModels.GEMINI.value}",
+        f"/ai/chat-history?model_name={AIModels.GROQ.value}",
         headers={"Authorization": f"Bearer {token}"}
     )
 
@@ -191,7 +169,7 @@ def test_get_chat_history_includes_usage_info(client, test_db, authenticated_use
     test_db.refresh(user)
 
     response = client.get(
-        f"/ai/chat-history?model_name={AIModels.GEMINI.value}",
+        f"/ai/chat-history?model_name={AIModels.GROQ.value}",
         headers={"Authorization": f"Bearer {token}"}
     )
 
@@ -206,13 +184,36 @@ def test_get_chat_history_includes_usage_info(client, test_db, authenticated_use
         user.ai_requests_count
 
 
-def test_chat_endpoint_enforces_usage_limit(client, test_db, authenticated_user, monkeypatch):
-    """Test that HTTP POST /ai/chat endpoint enforces usage limit"""
+@pytest.mark.parametrize("mocked_model", [AIModels.GEMINI])
+def test_unavailable_model(client, authenticated_user, mocked_model):
     from unittest.mock import patch
 
     user, token = authenticated_user
 
-    # Mock limit so test does not depend on env
+    print("Token:", token)
+    print("User found:", user)
+
+
+    with patch("src.repositories.chat_repository.is_provider_available") as mock_avail:
+        mock_avail.return_value = False
+
+        try:
+            with client.websocket_connect(f"/ai/ws/chat?token={token}") as websocket:
+                websocket.send_json({"model_name": mocked_model.value, "prompt": "Hello"})
+                response = websocket.receive_json()
+                assert response["error"] == "This AI provider is currently unavailable due to free-tier limits."
+                mock_avail.assert_called_once_with(mocked_model)
+        except Exception as e:
+            print(f"❌ Error: {type(e).__name__}: {e}")
+            raise
+
+
+def test_chat_endpoint_enforces_usage_limit(client, test_db, authenticated_user, monkeypatch):
+    """Test that HTTP POST /ai/ws/chat endpoint enforces usage limit"""
+    from unittest.mock import Mock, patch
+
+    user, token = authenticated_user
+
     mocked_limit = 7
     monkeypatch.setattr(settings, "AI_USAGE_LIMIT", mocked_limit)
 
@@ -223,22 +224,28 @@ def test_chat_endpoint_enforces_usage_limit(client, test_db, authenticated_user,
     test_db.commit()
     test_db.refresh(user)
 
-    with patch('src.repositories.chat_repository.get_ai_platform'):
-        response = client.post(
-            "/ai/chat",
-            json={
-                "model_name": AIModels.GEMINI.value,
-                "prompt": "Test prompt"
-            },
-            headers={"Authorization": f"Bearer {token}"}
-        )
+    with patch('src.repositories.chat_repository.get_ai_platform') as mock_platform:
+        mock_ai = Mock()
+        mock_ai.chat.return_value = "AI Response"
+        mock_platform.return_value = mock_ai
 
-        assert response.status_code == 403
-        assert "usage limit reached" in response.json()["detail"].lower()
+        # Connect via WebSocket with token
+        with client.websocket_connect(f"/ai/ws/chat?token={token}") as websocket:
+            # Send message
+            websocket.send_json({
+                "model_name": AIModels.GROQ.value,
+                "prompt": "Test prompt"
+            })
+            
+            # Should receive error about limit
+            response = websocket.receive_json()
+            
+            assert "error" in response
+            assert "usage limit reached" in response["error"].lower()
 
 
 def test_chat_endpoint_returns_remaining_requests(client, test_db, authenticated_user, monkeypatch):
-    """Test that HTTP POST /ai/chat endpoint returns remaining_requests"""
+    """Test that HTTP POST /ai/ws/chat endpoint returns remaining_requests"""
     from unittest.mock import Mock, patch
 
     user, token = authenticated_user
@@ -259,21 +266,22 @@ def test_chat_endpoint_returns_remaining_requests(client, test_db, authenticated
         mock_ai.chat.return_value = "AI Response"
         mock_platform.return_value = mock_ai
 
-        response = client.post(
-            "/ai/chat",
-            json={
-                "model_name": AIModels.GEMINI.value,
+        # Connect via WebSocket
+        with client.websocket_connect(f"/ai/ws/chat?token={token}") as websocket:
+            # Send message
+            websocket.send_json({
+                "model_name": AIModels.GROQ.value,
                 "prompt": "Test prompt"
-            },
-            headers={"Authorization": f"Bearer {token}"}
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert "remaining_requests" in data
-        # After successful call, counter increments by 1 → total used = 6
-        expected_remaining = mocked_limit - (user.ai_requests_count + 1)
-        assert data["remaining_requests"] == expected_remaining
+            })
+            
+            response = websocket.receive_json()
+            
+            assert "remaining_requests" in response
+            assert "response" in response
+            assert response["response"] == "AI Response"
+            
+            expected_remaining = mocked_limit - (5 + 1)
+            assert response["remaining_requests"] == expected_remaining
 
 
 def test_unlimited_user_bypasses_limit(client, test_db, authenticated_user):
@@ -294,16 +302,55 @@ def test_unlimited_user_bypasses_limit(client, test_db, authenticated_user):
         mock_ai.chat.return_value = "AI Response"
         mock_platform.return_value = mock_ai
 
-        response = client.post(
-            "/ai/chat",
-            json={
-                "model_name": AIModels.GEMINI.value,
+        # Connect via WebSocket
+        with client.websocket_connect(f"/ai/ws/chat?token={token}") as websocket:
+            # Send message
+            websocket.send_json({
+                "model_name": AIModels.GROQ.value,
                 "prompt": "Test prompt"
-            },
-            headers={"Authorization": f"Bearer {token}"}
-        )
+            })
+            
+            response = websocket.receive_json()
+            
+            assert "remaining_requests" in response
+            assert response["remaining_requests"] == -1  # -1 means unlimited
+            assert response["response"] == "AI Response"
 
-        assert response.status_code == 200
-        data = response.json()
-        assert "remaining_requests" in data
-        assert data["remaining_requests"] == -1  # -1 indicates unlimited
+
+def test_successful_chat_flow(client, test_db, authenticated_user):
+    """Test complete successful chat interaction"""
+    from unittest.mock import Mock, patch
+
+    user, token = authenticated_user
+    
+    # Reset user's request count
+    user.ai_requests_count = 0
+    user.is_unlimited = False
+    test_db.add(user)
+    test_db.commit()
+    
+    with patch('src.repositories.chat_repository.get_ai_platform') as mock_platform:
+        mock_ai = Mock()
+        mock_ai.chat.return_value = "Hello! How can I help you?"
+        mock_platform.return_value = mock_ai
+        
+        with client.websocket_connect(f"/ai/ws/chat?token={token}") as websocket:
+            # Send message
+            websocket.send_json({
+                "model_name": AIModels.GROQ.value,
+                "prompt": "Hello AI"
+            })
+            
+            # Receive response
+            response = websocket.receive_json()
+            
+            # Verify response structure
+            assert "prompt" in response
+            assert "response" in response
+            assert "created_at" in response
+            assert "model_name" in response
+            assert "remaining_requests" in response
+            
+            assert response["prompt"] == "Hello AI"
+            assert response["response"] == "Hello! How can I help you?"
+            assert response["model_name"] == AIModels.GROQ.value

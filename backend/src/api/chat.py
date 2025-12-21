@@ -30,7 +30,7 @@ ratelimit = WebSocketRateLimiter(
 
 @router.get('/platforms', response_model=GetPlatforms)
 def get_platforms():
-    return {"platforms": list(AIModels)}
+    return {"platforms": [model.value for model in AIModels]}
 
 
 @router.get('/provider-availability')

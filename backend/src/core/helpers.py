@@ -10,7 +10,7 @@ from src.schemas.chat_schema import WebSocketMessage
 from src.models.user import User
 from src.ai.gemini import Gemini
 from src.ai.groq import GroqAI
-from src.ai.openai import OpenAI
+# from src.ai.openai import OpenAI
 from src.core.config import settings
 from src.core.enums import AIModels
 
@@ -20,7 +20,7 @@ SYSTEM_PROMPT = None
 PLATFORM_MAP = {
     AIModels.GROQ: GroqAI,
     AIModels.GEMINI: Gemini,
-    AIModels.OPENAI: OpenAI,
+    # AIModels.OPENAI: OpenAI,
 }
 
 
@@ -55,12 +55,18 @@ async def parse_ws_message(websocket, raw_data):
 async def process_ai_request(websocket, data, user, db):
     from src.repositories import chat_repository
 
+    # generate_model_response now sends errors via WebSocket and returns (None, None) for errors
+    # No HTTPException is raised, so WebSocket stays open
     try:
-        chat_record, remaining_requests = chat_repository.generate_model_response(
-            data, user, db)
+        chat_record, remaining_requests = await chat_repository.generate_model_response(
+            data, user, db, websocket)
         return chat_record, remaining_requests
-    except HTTPException as e:
-        await websocket.send_json({"error": e.detail})
+    except Exception as e:
+        # Catch any unexpected exceptions to prevent WebSocket disconnect
+        try:
+            await websocket.send_json({"error": f"An error occurred: {str(e)}"})
+        except Exception:
+            pass
         return None, None
 
 

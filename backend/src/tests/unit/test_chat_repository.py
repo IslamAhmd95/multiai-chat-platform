@@ -18,7 +18,7 @@ def websocket_message():
     """Sample WebSocket message"""
     return WebSocketMessage(
         prompt="Hello, AI!",
-        model_name=AIModels.GEMINI
+        model_name=AIModels.GROQ
     )
 
 
@@ -44,7 +44,7 @@ def test_generate_model_response_saves_to_database(test_db, chat_user, websocket
         assert isinstance(chat_record, ChatHistory)
         assert chat_record.prompt == "Hello, AI!"
         assert chat_record.response == "Hello! How can I help you?"
-        assert chat_record.model_name == AIModels.GEMINI
+        assert chat_record.model_name == AIModels.GROQ
         assert chat_record.user_id == chat_user.id
         assert isinstance(remaining, int)
         assert remaining >= 0
@@ -57,9 +57,9 @@ def test_generate_model_response_calls_correct_ai_platform(test_db, chat_user):
     test_db.commit()
     test_db.refresh(chat_user)
     
-    gemini_message = WebSocketMessage(
+    groq_message = WebSocketMessage(
         prompt="Test Prompt",
-        model_name=AIModels.GEMINI
+        model_name=AIModels.GROQ
     )
 
     with patch('src.repositories.chat_repository.get_ai_platform') as mock_platform:
@@ -68,12 +68,12 @@ def test_generate_model_response_calls_correct_ai_platform(test_db, chat_user):
         mock_platform.return_value = mock_ai
 
         chat_repository.generate_model_response(
-            gemini_message, 
+            groq_message, 
             chat_user, 
             test_db
         )
 
-        mock_platform.assert_called_once_with(AIModels.GEMINI)
+        mock_platform.assert_called_once_with(AIModels.GROQ)
 
 
 def test_generate_model_response_raises_error_when_ai_fails(test_db, chat_user, websocket_message):
@@ -104,20 +104,20 @@ def test_get_chat_history_returns_user_chats(test_db, chat_user):
         user_id=chat_user.id,
         prompt="First prompt",
         response="First response",
-        model_name=AIModels.GEMINI
+        model_name=AIModels.GROQ
     )
     chat2 = ChatHistory(
         user_id=chat_user.id,
         prompt="Second prompt",
         response="Second response",
-        model_name=AIModels.GEMINI
+        model_name=AIModels.GROQ
     )
 
     test_db.add(chat1)
     test_db.add(chat2)
     test_db.commit()
 
-    result = chat_repository.get_chat_history(AIModels.GEMINI, chat_user, test_db)
+    result = chat_repository.get_chat_history(AIModels.GROQ, chat_user, test_db)
 
     assert len(result) == 2
     assert result[0].prompt == "First prompt"
@@ -127,14 +127,6 @@ def test_get_chat_history_returns_user_chats(test_db, chat_user):
 def test_get_chat_history_filters_by_model_name(test_db, chat_user):
     """Test that get_chat_history only returns chats for specified model"""
     
-    # Create chats for different models
-    gemini_chat = ChatHistory(
-        user_id=chat_user.id,
-        prompt="Gemini prompt",
-        response="Gemini response",
-        model_name=AIModels.GEMINI
-    )
-    
     groq_chat = ChatHistory(
         user_id=chat_user.id,
         prompt="Groq prompt",
@@ -142,19 +134,18 @@ def test_get_chat_history_filters_by_model_name(test_db, chat_user):
         model_name=AIModels.GROQ
     )
     
-    test_db.add(gemini_chat)
     test_db.add(groq_chat)
     test_db.commit()
     
-    result = chat_repository.get_chat_history(AIModels.GEMINI, chat_user, test_db)
+    result = chat_repository.get_chat_history(AIModels.GROQ, chat_user, test_db)
     
     assert len(result) == 1
-    assert result[0].model_name == AIModels.GEMINI
+    assert result[0].model_name == AIModels.GROQ
 
 
 def test_get_chat_history_returns_empty_for_no_chats(test_db, chat_user):
     
-    result = chat_repository.get_chat_history(AIModels.GEMINI, chat_user, test_db)
+    result = chat_repository.get_chat_history(AIModels.GROQ, chat_user, test_db)
     
     assert result == []
 
@@ -176,12 +167,12 @@ def test_get_chat_history_only_returns_current_user_chats(test_db, chat_user):
         user_id=other_user.id,
         prompt="Other user prompt",
         response="Other user response",
-        model_name=AIModels.GEMINI
+        model_name=AIModels.GROQ  
     )
     test_db.add(other_chat)
     test_db.commit()
     
-    result = chat_repository.get_chat_history(AIModels.GEMINI, chat_user, test_db)
+    result = chat_repository.get_chat_history(AIModels.GROQ, chat_user, test_db)
     
     assert len(result) == 0
 

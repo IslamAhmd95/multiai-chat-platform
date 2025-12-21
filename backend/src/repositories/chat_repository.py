@@ -1,4 +1,4 @@
-from fastapi import HTTPException, status
+from fastapi import HTTPException, WebSocket, status
 from sqlmodel import Session, select
 
 from src.schemas.chat_schema import ChatRequest, WebSocketMessage
@@ -22,34 +22,32 @@ def check_usage_limit(user: User) -> tuple[bool, int]:
     return (True, remaining)
 
 
-def generate_model_response(data: WebSocketMessage, current_user: User, db: Session):
-    """
-    Generate AI response and increment usage counter.
-    Returns tuple of (chat_record, remaining_requests).
-    """
+async def generate_model_response(data: WebSocketMessage, current_user: User, db: Session, websocket: WebSocket):
     # Check provider availability BEFORE any other checks
     if not is_provider_available(data.model_name):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This AI provider is currently unavailable due to free-tier limits."
-        )
+        await websocket.send_json({
+            "error": "This AI provider is currently unavailable due to free-tier limits."
+        })
+        return None, None
 
     # Check usage limit BEFORE calling AI provider
     allowed, remaining = check_usage_limit(current_user)
 
     if not allowed:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"AI usage limit reached. You have used all {settings.AI_USAGE_LIMIT} free messages."
-        )
+        await websocket.send_json({
+            "error": f"AI usage limit reached. You have used all {settings.AI_USAGE_LIMIT} free messages."
+        })
+        return None, None
 
     platform = get_ai_platform(data.model_name)
 
     try:
         response_text = platform.chat(data.prompt)
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail=f"AI platform error: {str(e)}")
+        await websocket.send_json({
+            "error": f"AI platform error: {str(e)}"
+        })
+        return None, None
 
     try:
         chat = ChatHistory(user_id=current_user.id, prompt=data.prompt,
@@ -74,26 +72,22 @@ def generate_model_response(data: WebSocketMessage, current_user: User, db: Sess
         return chat, final_remaining
     except Exception as e:
         db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error: {str(e)}"
-        )
+        await websocket.send_json({
+            "error": f"Database error: {str(e)}"
+        })
+        return None, None
 
 
 def get_chat_history(model_name: AIModels, current_user: User, db: Session):
     chat_records = db.scalars(select(ChatHistory).where(
         ChatHistory.user_id == current_user.id,
-        ChatHistory.model_name == model_name)
+        ChatHistory.model_name == model_name.value)
     ).all()
     return chat_records
 
 
 # old non-real-time chat code
 def chat(data: ChatRequest, current_user: User, db: Session):
-    """
-    Legacy chat endpoint (non-WebSocket).
-    Returns tuple of (response_text, remaining_requests).
-    """
     # Check provider availability BEFORE any other checks
     if not is_provider_available(data.model_name):
         raise HTTPException(
